@@ -38,7 +38,7 @@ const ChatInput: React.FC = () => {
   };
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/80 backdrop-blur-md border-t border-border">
+    <div className="sticky bottom-0 left-0 right-0 p-4 bg-background/80 backdrop-blur-md border-t border-border">
       <form 
         onSubmit={handleSubmit}
         className="max-w-4xl mx-auto flex items-end gap-2 bg-white rounded-2xl glass-morphism p-2 shadow-sm"

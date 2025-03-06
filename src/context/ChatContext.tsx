@@ -1,18 +1,20 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { getChat, sendMessage } from '../services/api';
+import { getChats, getChat, sendMessage } from '../services/api';
+import { toast } from 'sonner';
 
 export type Message = {
   id: string;
   content: string;
   role: 'user' | 'assistant';
   timestamp: number;
+  chatId?: string;
 };
 
 export type Chat = {
   id: string;
   title: string;
-  messages: Message[];
+  messages?: Message[];
   createdAt: number;
   updatedAt: number;
 };
@@ -23,7 +25,8 @@ interface ChatContextProps {
   loading: boolean;
   createNewChat: () => void;
   sendChatMessage: (message: string) => Promise<void>;
-  setCurrentChat: (chatId: string) => void;
+  setCurrentChat: (chatId: string) => Promise<void>;
+  fetchChats: () => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextProps | undefined>(undefined);
@@ -45,107 +48,80 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
   const [currentChat, setCurrentChatState] = useState<Chat | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
-  // Load chats from localStorage on mount
-  useEffect(() => {
-    const savedChats = localStorage.getItem('chats');
-    if (savedChats) {
-      const parsedChats = JSON.parse(savedChats);
-      setChats(parsedChats);
+  const fetchChats = async () => {
+    try {
+      const fetchedChats = await getChats();
+      setChats(fetchedChats);
       
       // Set the most recent chat as current if available
-      if (parsedChats.length > 0) {
-        const mostRecentChat = parsedChats.sort((a: Chat, b: Chat) => b.updatedAt - a.updatedAt)[0];
+      if (fetchedChats.length > 0 && !currentChat) {
+        const mostRecentChat = fetchedChats[0]; // Already sorted by API
         setCurrentChatState(mostRecentChat);
       }
+    } catch (error) {
+      console.error('Error fetching chats:', error);
+      toast.error('Failed to load chats');
     }
+  };
+
+  // Load chats when component mounts
+  useEffect(() => {
+    fetchChats();
   }, []);
 
-  // Save chats to localStorage whenever they change
-  useEffect(() => {
-    if (chats.length > 0) {
-      localStorage.setItem('chats', JSON.stringify(chats));
-    }
-  }, [chats]);
-
   const createNewChat = () => {
-    const newChat: Chat = {
-      id: Date.now().toString(),
-      title: 'New Chat',
-      messages: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    setChats((prevChats) => [newChat, ...prevChats]);
-    setCurrentChatState(newChat);
+    setCurrentChatState(null); // Clear current chat to start fresh
   };
 
-  const setCurrentChat = (chatId: string) => {
-    const chat = chats.find((c) => c.id === chatId);
-    if (chat) {
-      setCurrentChatState(chat);
+  const setCurrentChat = async (chatId: string) => {
+    try {
+      setLoading(true);
+      const { chat, messages } = await getChat(chatId);
+      
+      const chatWithMessages: Chat = {
+        ...chat,
+        messages: messages,
+      };
+      
+      setCurrentChatState(chatWithMessages);
+    } catch (error) {
+      console.error('Error fetching chat:', error);
+      toast.error('Failed to load chat');
+    } finally {
+      setLoading(false);
     }
-  };
-
-  const updateChat = (updatedChat: Chat) => {
-    setChats((prevChats) =>
-      prevChats.map((chat) => (chat.id === updatedChat.id ? updatedChat : chat))
-    );
-    setCurrentChatState(updatedChat);
   };
 
   const sendChatMessage = async (content: string) => {
-    if (!currentChat) {
-      createNewChat();
-    }
-
+    if (!content.trim()) return;
+    
     setLoading(true);
 
     try {
-      const chat = currentChat || chats[0];
+      const { chat, messages } = await sendMessage(
+        content, 
+        currentChat?.id
+      );
       
-      // Add user message
-      const userMessage: Message = {
-        id: Date.now().toString(),
-        content,
-        role: 'user',
-        timestamp: Date.now(),
-      };
-
-      const updatedMessages = [...chat.messages, userMessage];
+      // Update the chats list with the new or updated chat
+      setChats(prevChats => {
+        const chatExists = prevChats.some(c => c.id === chat.id);
+        
+        if (chatExists) {
+          return prevChats.map(c => c.id === chat.id ? chat : c);
+        } else {
+          return [chat, ...prevChats];
+        }
+      });
       
-      const updatedChat: Chat = {
+      // Update current chat with new messages
+      setCurrentChatState({
         ...chat,
-        messages: updatedMessages,
-        updatedAt: Date.now(),
-      };
-
-      updateChat(updatedChat);
-
-      // Get AI response
-      const response = await sendMessage(content, updatedMessages);
-
-      // Add AI message
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: response.message,
-        role: 'assistant',
-        timestamp: Date.now(),
-      };
-
-      const finalMessages = [...updatedChat.messages, aiMessage];
-      
-      const finalChat: Chat = {
-        ...updatedChat,
-        messages: finalMessages,
-        title: updatedChat.messages.length === 0 ? content.slice(0, 30) : updatedChat.title,
-        updatedAt: Date.now(),
-      };
-
-      updateChat(finalChat);
+        messages: messages,
+      });
     } catch (error) {
       console.error('Failed to send message:', error);
-      // Handle error (you could add an error message to the state)
+      toast.error('Failed to send message');
     } finally {
       setLoading(false);
     }
@@ -160,6 +136,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
         createNewChat,
         sendChatMessage,
         setCurrentChat,
+        fetchChats,
       }}
     >
       {children}
